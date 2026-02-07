@@ -1,18 +1,17 @@
-import OpenRouter from "openrouter";
 import { ChatMessage, MessageRole } from "../utils/types";
 
-const API_KEY = process.env.API_KEY || '';
+const API_KEY = process.env.GEMINI_API_KEY || process.env.API_KEY || "";
+const MODEL = "gemini-1.5-flash";
 
-class OpenRouterService {
-  private client: OpenRouter;
+class GeminiService {
   private chatHistory: ChatMessage[] = [];
-  private systemInstruction: string = "You are Dland, a professional, clear, and direct AI assistant. You provide high-quality responses using clean Markdown formatting. Your tone is helpful but neutral and sophisticated.";
+  private systemInstruction =
+    "You are Dland, a professional, clear, and direct AI assistant. You provide high-quality responses using clean Markdown formatting. Your tone is helpful but neutral and sophisticated.";
 
   constructor() {
     if (!API_KEY) {
-      console.error("OpenRouter API Key is missing. Please set process.env.OPENROUTER_API_KEY.");
+      console.error("Gemini API Key is missing. Please set process.env.GEMINI_API_KEY.");
     }
-    this.client = new OpenRouter({ apiKey: API_KEY });
   }
 
   public startChat(systemInstruction?: string, history?: ChatMessage[]) {
@@ -20,47 +19,51 @@ class OpenRouterService {
     this.chatHistory = history || [];
   }
 
-  public async *sendMessageStream(message: string): AsyncGenerator<string, void, unknown> {
-    if (!API_KEY) throw new Error("OpenRouter API Key missing.");
+  private buildContents() {
+    return this.chatHistory.map((msg) => ({
+      role: msg.role === MessageRole.Model ? "model" : "user",
+      parts: [{ text: msg.text }]
+    }));
+  }
 
-    // Push user message to local history
+  public async *sendMessageStream(message: string): AsyncGenerator<string, void, unknown> {
+    if (!API_KEY) throw new Error("Gemini API Key missing.");
+
     this.chatHistory.push({ role: MessageRole.User, text: message });
 
-    const messagesForAPI = [
-      { role: "system", content: this.systemInstruction },
-      ...this.chatHistory.map(msg => ({
-        role: msg.role === MessageRole.User ? "user" : "assistant",
-        content: msg.text
-      }))
-    ];
+    const body = {
+      contents: this.buildContents(),
+      systemInstruction: { parts: [{ text: this.systemInstruction }] }
+    };
 
     try {
-      const stream = await this.client.chat.completions.create({
-        model: "qwen/qwen3-next-80b-a3b-instruct:free", // or any OpenRouter model you like
-        messages: messagesForAPI,
-        stream: true
-      });
-
-      for await (const chunk of stream) {
-        const text = chunk.choices?.[0]?.delta?.content;
-        if (text) {
-          yield text;
+      const response = await fetch(
+        `https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:generateContent?key=${API_KEY}`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json"
+          },
+          body: JSON.stringify(body)
         }
+      );
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(`Gemini API Error: ${response.status} ${errorText}`);
       }
 
-      // Optionally, push the assistant's full reply to history
-      const finalText = await this.client.chat.completions.create({
-        model: "gpt-4o-mini",
-        messages: messagesForAPI
-      });
+      const data = await response.json();
+      const assistantReply = data?.candidates?.[0]?.content?.parts?.map((part: { text: string }) => part.text).join("") || "";
 
-      const assistantReply = finalText.choices?.[0]?.message?.content;
       if (assistantReply) {
         this.chatHistory.push({ role: MessageRole.Model, text: assistantReply });
+        yield assistantReply;
+      } else {
+        yield "Sorry, I couldn't generate a response.";
       }
-
     } catch (err) {
-      console.error("Error sending message to OpenRouter:", err);
+      console.error("Error sending message to Gemini:", err);
       throw err;
     }
   }
@@ -75,4 +78,4 @@ class OpenRouterService {
   }
 }
 
-export const openRouterService = new OpenRouterService();
+export const geminiService = new GeminiService();
