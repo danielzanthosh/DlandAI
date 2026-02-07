@@ -1,0 +1,7 @@
+{
+  "name": "Dland",
+  "description": "Dland - A modern, professional AI interface with a focus on clarity and minimalism.",
+  "requestFramePermissions": [
+    "geolocation"
+  ]
+}
